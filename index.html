@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Trinca Metabólico</title>
+<meta name="theme-color" content="#e4491f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Trinca">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" type="image/svg+xml" href="./favicon.svg">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="./app.css">
+<script src="./shim.js"></script>
+</head>
+<body>
+<header>
+  <div class="top">
+    <button class="who" id="who" aria-label="Trocar de pessoa"><i class="dot"></i><b id="whoname">Escolher</b><small>trocar</small></button>
+    <h1>Trinca Metabólico</h1>
+    <button class="sync" id="sync" data-s="info">Conectando</button>
+  </div>
+  <div id="tabs">
+    <div class="seg" role="group" aria-label="Seção">
+      <button data-view="treino" aria-pressed="true">Treino</button>
+      <button data-view="corpo" aria-pressed="false">Corpo</button>
+      <button data-view="jornada" aria-pressed="false">Jornada</button>
+    </div>
+    <div id="trainnav"><div class="weeks" id="weeks" role="group" aria-label="Semana"></div>
+    <div class="days" id="days" role="group" aria-label="Dia da semana"></div></div>
+  </div>
+</header>
+<main id="main"></main>
+<div class="rest" id="rest" role="timer">
+  <div class="t"><span id="clock">0:00</span><small id="restlbl">descanso</small></div>
+  <button id="plus">+15 s</button><button id="stop">Fechar</button>
+</div>
+<script src="./data.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
