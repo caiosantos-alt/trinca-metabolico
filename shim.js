@@ -1,9 +1,10 @@
 /* Adaptador: faz o app usar o banco Convex quando roda fora do Claude. */
 (function(){
   if(window.claude&&window.claude.use)return;
-  var cx='https://dynamic-malamute-684.eu-west-1.convex.cloud';
+  var cx=null,DEF='https://dynamic-malamute-684.eu-west-1.convex.cloud';
   try{cx=new URLSearchParams(location.search).get('cx')}catch(e){}
   try{if(cx)localStorage.setItem('trinca:cx',cx);else cx=localStorage.getItem('trinca:cx')}catch(e){}
+  if(!cx)cx=DEF;
   var lastWrite=0,inflight=0,subs=[];
   function call(kind,path,args){
     return fetch(cx+'/api/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:path,args:args,format:'json'})})
