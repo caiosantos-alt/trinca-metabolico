@@ -410,7 +410,9 @@ function updateAct(){
 }
 
 /* ---------- nutrição ---------- */
-let nutDate=null,nutMeal=null,nutSel=null,nutQ='',nutG='100';
+let nutDate=null,nutMeal=null,nutSel=null,nutQ='',nutG='100',supSel='creatina',supD=null;
+const SUPS=[['creatina','Creatina','g','5'],['whey','Whey','g','30'],['cafeina','Cafeína','mg','200'],['outro','Outro','','']];
+const supsOf=d=>(S.diary[d]||{}).sup||[];
 const MEALS=[['cafe','Café da manhã'],['alm','Almoço'],['lan','Lanche'],['jan','Jantar'],['out','Outros']];
 const defMeal=()=>{const h=new Date().getHours();return h<10?'cafe':h<14?'alm':h<18?'lan':'jan'};
 const fold=t=>String(t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
@@ -508,6 +510,16 @@ function renderNut(){
     const L=items.filter(x=>x.m===k);if(!L.length)return'';
     const sk=L.reduce((a,x)=>a+x.k,0);
     return`<div class="meal"><div class="mh"><b>${n}</b><span>${fi(sk)} kcal</span></div>${L.map(x=>`<div class="mi"><span>${esc(x.n)}<small>${fi(x.g)} g · P ${f1(x.p)} · C ${f1(x.c)} · G ${f1(x.l)}</small></span><b>${fi(x.k)}</b><button class="del" data-mdel="${x.u}">Excluir</button></div>`).join('')}</div>`}).join(''):'<p class="fine">Nada lançado neste dia.</p>')+`</section>`;
+  const sp=SUPS.find(x=>x[0]===supSel)||SUPS[0],sl=supsOf(nutDate),cafe=sl.filter(x=>x.k==='cafeina').reduce((a,x)=>a+x.q,0);
+  const cdays=Array.from({length:7},(_,i)=>addDays(nutDate,-i)).filter(d=>supsOf(d).some(x=>x.k==='creatina')).length;
+  h+=`<section class="card"><div class="head"><h3>Suplementos tomados</h3></div>
+    <div class="chips" role="group" aria-label="Suplemento">${SUPS.map(([k,n])=>`<button data-sp="${k}" aria-pressed="${supSel===k}">${n}</button>`).join('')}</div>
+    <div class="form">${sp[0]==='outro'?'<label class="wide">Nome<input type="text" id="sp-n" placeholder="Vitamina D, ômega-3…"></label>':''}
+    <label>Dose<input type="text" inputmode="decimal" id="sp-d" value="${esc(supD!=null?supD:sp[3])}" placeholder="${sp[3]}"></label>
+    <label>Unidade<input type="text" id="sp-u" value="${esc(sp[2])}" ${sp[0]==='outro'?'':'readonly'}></label>
+    <button class="save" data-spadd="1">Registrar</button></div>
+    ${sl.length?`<div class="hist">${sl.map(x=>`<div><span>${esc(x.n)}</span><b>${f1(x.q).replace(',0','')} ${esc(x.unit||'')}</b><button class="del" data-spdel="${x.u}">Excluir</button></div>`).join('')}</div>`:'<p class="fine">Nada registrado neste dia.</p>'}
+    <p class="fine">Creatina registrada em ${cdays} dos últimos 7 dias.${cafe>400?' A cafeína do dia passou de 400 mg, o limite diário que a EFSA considera seguro para adultos saudáveis.':''} Para contar calorias e proteína do whey, lance também em "Adicionar alimento" (alimento personalizado com os valores do rótulo).</p></section>`;
   h+=`<section class="card"><details id="sup"><summary>Suplementação: o que tem evidência</summary><div class="sup">
     <p class="fine">Informação geral baseada em posições de sociedades científicas. Não substitui consulta com nutricionista, nutrólogo ou médico. Se você tem doença (principalmente renal, cardíaca ou hipertensão), usa medicamentos, está grávida ou amamentando, converse com um profissional antes de qualquer suplemento.</p>
     <div class="sp"><b>Creatina monohidratada, 3 a 5 g por dia</b><span>É o suplemento com mais evidência para força e massa magra e é considerado seguro para adultos saudáveis. Vale tomar todos os dias, com ou sem treino. <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5469049/" target="_blank" rel="noopener">ISSN, 2017</a></span></div>
@@ -775,6 +787,15 @@ document.addEventListener('click',async ev=>{
     const m=nv('g-move'),e=nv('g-ex'),s=nv('g-steps'),g=Object.assign({},S.prefs.goals||{});
     if(m>0&&m<5000)g.move=Math.round(m);if(e>0&&e<600)g.ex=Math.round(e);if(s>0&&s<100000)g.steps=Math.round(s);
     S.prefs.goals=g;persist('state/prefs');renderAtiv();return}
+  if(t.dataset.sp){supSel=t.dataset.sp;supD=null;renderNut();return}
+  if(t.dataset.spadd){
+    const sp=SUPS.find(x=>x[0]===supSel)||SUPS[0],q=nv('sp-d'),date=nutDate||todayS();
+    let n=sp[1],unit=sp[2];
+    if(sp[0]==='outro'){n=(document.getElementById('sp-n').value||'').trim();unit=(document.getElementById('sp-u').value||'').trim()}
+    if(!n||!(q>0&&q<=100000)){t.textContent='Confira os dados';setTimeout(()=>{t.textContent='Registrar'},1800);return}
+    const arr=supsOf(date).slice();arr.push({u:Date.now().toString(36)+Math.floor(Math.random()*1e3).toString(36),k:sp[0],n,q:Math.round(q*10)/10,unit});
+    diaryPatch({sup:arr},date);supD=null;renderNut();return}
+  if(t.dataset.spdel){const date=nutDate||todayS();diaryPatch({sup:supsOf(date).filter(x=>x.u!==t.dataset.spdel)},date);renderNut();return}
   if(t.dataset.nutd){const n=addDays(nutDate||todayS(),+t.dataset.nutd);if(n<=todayS()){nutDate=n;renderNut()}return}
   if(t.dataset.nm){nutMeal=t.dataset.nm;renderNut();return}
   if(t.dataset.fsel){nutSel=t.dataset.fsel;nutG='100';renderNut();setTimeout(()=>{const g=document.getElementById('n-g');if(g){g.focus();g.select()}},50);return}
@@ -848,6 +869,7 @@ document.addEventListener('keydown',ev=>{const z=ev.target.closest&&ev.target.cl
 document.addEventListener('input',ev=>{
   const i=ev.target;if(!i.id&&!(i.dataset&&i.dataset.kg!==undefined))return;
   if(i.dataset&&i.dataset.kg!==undefined){S.loads[i.dataset.kg]=i.value;persist('state/loads');return}
+  if(i.id==='sp-d'){supD=i.value;return}
   if(i.id==='n-q'){nutQ=i.value;updateNutRes();return}
   if(i.id==='n-g'){nutG=i.value;const p=document.getElementById('npv');if(p)p.textContent=npv();return}
   if(i.id&&i.id.startsWith('a-')){const k=i.id.slice(2),a=ACT.find(x=>x[0]===k);if(a){const v=num(i.value);
