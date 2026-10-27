@@ -197,7 +197,7 @@ select{height:52px;width:100%;border:1px solid var(--line);border-radius:8px;bac
 /* atividade */
 .seg{grid-template-columns:repeat(4,1fr)}
 .seg button{font-size:15px;letter-spacing:.03em;padding-inline:2px}
-.arow{display:grid;grid-template-columns:62px repeat(4,1fr);gap:6px;padding:8px 0;border-top:1px solid var(--line);font-variant-numeric:tabular-nums;font-size:14px;text-align:right}
+.arow{display:grid;grid-template-columns:84px repeat(4,1fr);gap:6px;padding:8px 0;border-top:1px solid var(--line);font-variant-numeric:tabular-nums;font-size:14px;text-align:right}
 .arow:first-child{border-top:0}
 .arow span:first-child{text-align:left}
 .arow.ahead{font-size:11px;color:var(--muted);letter-spacing:.05em;text-transform:uppercase}
