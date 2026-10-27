@@ -204,3 +204,20 @@ select{height:52px;width:100%;border:1px solid var(--line);border-radius:8px;bac
 .arow:not(.ahead) span:first-child{color:var(--muted)}
 .card .head .ghost{flex:1}
 .ghost:disabled{opacity:.4}
+
+/* nutrição */
+.seg{grid-template-columns:repeat(5,1fr)}
+.seg button{font-size:13px;letter-spacing:.02em;padding-inline:0}
+.srch{height:52px;width:100%;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:600 18px var(--body);padding:0 12px}
+.fres{display:grid;gap:6px}
+.fres button{text-align:left;border:1px solid var(--line);background:transparent;border-radius:10px;padding:10px 12px;display:grid;gap:2px}
+.fres small{color:var(--muted);font-size:12.5px}
+.meal{display:grid;gap:4px;padding-top:6px}
+.mh{display:flex;justify-content:space-between;font:700 18px var(--display);letter-spacing:.04em;text-transform:uppercase}
+.mi{display:grid;grid-template-columns:1fr auto auto;gap:4px 10px;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-variant-numeric:tabular-nums;font-size:15px}
+.mi small{display:block;color:var(--muted);font-size:12.5px}
+.sup{display:grid;gap:12px;margin-top:10px}
+.sp{display:grid;gap:3px;font-size:14px}
+.sp b{font-size:15px}
+.sp span{color:var(--muted)}
+.sp a{color:var(--accent)}

@@ -24,11 +24,11 @@ function mondayOf(s){const d=new Date(tms(s));d.setUTCDate(d.getUTCDate()-((d.ge
 function addDays(s,n){return new Date(tms(s)+n*864e5).toISOString().slice(0,10)}
 
 /* ---------- estado e salvamento ---------- */
-const fresh=()=>({log:{},sets:{},loads:{},prefs:{},diary:{}});
+const fresh=()=>({log:{},sets:{},loads:{},prefs:{},diary:{},meals:{},foods:{}});
 let P=null,D=null,S=fresh();
 let db=null,dbState='init',ro=false,unsubs=[];
 const pend=new Map(),chain=new Map(),dirty=new Set();
-let first={log:false,sets:false,diary:false};
+let first={log:false,sets:false,diary:false,meals:false};
 const sexOf=()=>S.prefs.sex||P.sex;
 const isF=()=>sexOf()==='F';
 const modeOf=()=>S.prefs.mode||P.mode;
@@ -49,7 +49,8 @@ function dataFor(p){
   if(c==='log')return S.log[id]||null;
   if(c==='sets')return S.sets[id]||null;
   if(c==='diary')return S.diary[id]||null;
-  return id==='loads'?{m:S.loads}:S.prefs;
+  if(c==='meals')return S.meals[id]||null;
+  return id==='loads'?{m:S.loads}:id==='foods'?{m:S.foods}:S.prefs;
 }
 function persist(path){
   saveLocal();
@@ -107,15 +108,15 @@ function seedDefaults(){
   persist('state/prefs');softRender();
 }
 function applyDoc(kind,snap){
-  const path='state/'+kind,pending=pend.has(path);
+  const path='state/'+kind,pending=pend.has(path),mk=kind==='loads'?'loads':kind==='foods'?'foods':null;
   const d=snap.exists?snap.data():null;
   if(!pending){
     if(d){
-      const v=kind==='loads'?(d.m||{}):d;
-      if(JSON.stringify(v)!==JSON.stringify(kind==='loads'?S.loads:S.prefs)){if(kind==='loads')S.loads=v;else S.prefs=v;saveLocal();softRender()}
+      const v=mk?(d.m||{}):d,cur=mk?S[mk]:S.prefs;
+      if(JSON.stringify(v)!==JSON.stringify(cur)){if(mk)S[mk]=v;else S.prefs=v;saveLocal();softRender()}
     }else if(!snap.metadata.fromCache){
       if(kind==='prefs'&&!Object.keys(S.prefs).length)seedDefaults();
-      else{const loc=kind==='loads'?S.loads:S.prefs;if(Object.keys(loc).length)persist(path)}
+      else{const loc=mk?S[mk]:S.prefs;if(Object.keys(loc).length)persist(path)}
     }
   }
   if(dbState==='init')dbState='ok';setStatus();
@@ -126,8 +127,8 @@ function subscribe(){
   const pid=P.pid,pf=P.pfx,g=fn=>s=>{if(P&&P.pid===pid)fn(s)};
   const err=()=>{dbState='error';setStatus()};
   try{
-    ['log','sets','diary'].forEach(n=>unsubs.push(db.collection(pf+n).onSnapshot(g(s=>applyColl(n,s)),err)));
-    ['loads','prefs'].forEach(k=>unsubs.push(db.collection(pf+'state').doc(k).onSnapshot(g(s=>applyDoc(k,s)),err)));
+    ['log','sets','diary','meals'].forEach(n=>unsubs.push(db.collection(pf+n).onSnapshot(g(s=>applyColl(n,s)),err)));
+    ['loads','prefs','foods'].forEach(k=>unsubs.push(db.collection(pf+'state').doc(k).onSnapshot(g(s=>applyDoc(k,s)),err)));
   }catch(e){err()}
 }
 async function initDb(){
@@ -142,13 +143,13 @@ function setProfile(pid){
   if(P&&P.pid===pid){view='treino';render();return}
   if(P&&db)[...pend.keys()].forEach(p=>{clearTimeout(pend.get(p).t);flush(p)});
   unsubs.forEach(f=>{try{f()}catch(e){}});unsubs=[];
-  P=PROFILES[pid];D=DATA[pid];S=fresh();first={log:false,sets:false,diary:false};
+  P=PROFILES[pid];D=DATA[pid];S=fresh();first={log:false,sets:false,diary:false,meals:false};
   pend.clear();chain.clear();dirty.clear();
   document.documentElement.dataset.p=P.attr;
   try{localStorage.setItem('trinca:pid',pid)}catch(e){}
   loadLocal();
   if(dbState==='local')seedDefaults();
-  view='treino';actDate=null;sel='cintura';formOpen=false;weekTouched=false;compSel='lean';
+  view='treino';actDate=null;nutDate=null;nutSel=null;nutQ='';sel='cintura';formOpen=false;weekTouched=false;compSel='lean';
   week=curWeek();di=TODAY;
   subscribe();render();
 }
@@ -408,6 +409,116 @@ function updateAct(){
     if(b)b.style.width=(r[k]!=null?clamp(r[k]/g[k]*100,0,100):0)+'%'});
 }
 
+/* ---------- nutrição ---------- */
+let nutDate=null,nutMeal=null,nutSel=null,nutQ='',nutG='100';
+const MEALS=[['cafe','Café da manhã'],['alm','Almoço'],['lan','Lanche'],['jan','Jantar'],['out','Outros']];
+const defMeal=()=>{const h=new Date().getHours();return h<10?'cafe':h<14?'alm':h<18?'lan':'jan'};
+const fold=t=>String(t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+const TACOI=new Map(TACO.map(r=>[r[0],r]));
+function foodGet(key){
+  if(key[0]==='t'){const r=TACOI.get(+key.slice(1));return r?{key,n:r[1],k:r[2],p:r[3],c:r[4],l:r[5],f:r[6]}:null}
+  const c=S.foods[key];return c?{key,n:c.n,k:c.k,p:c.p,c:c.c,l:c.l,f:c.f||0,mine:true}:null;
+}
+function foodSearch(q){
+  const ts=fold(q).split(/\s+/).filter(Boolean);if(!ts.length)return[];
+  const all=Object.keys(S.foods).map(k=>foodGet(k)).concat(TACO.map(r=>({key:'t'+r[0],n:r[1],k:r[2],p:r[3],c:r[4],l:r[5],f:r[6]})));
+  return all.map(x=>({x,h:fold(x.n)})).filter(o=>ts.every(t=>o.h.includes(t)))
+    .sort((a,b)=>(b.x.mine?1:0)-(a.x.mine?1:0)||(a.h.startsWith(ts[0])?0:1)-(b.h.startsWith(ts[0])?0:1)||a.x.n.length-b.x.n.length).slice(0,8).map(o=>o.x);
+}
+function nutTot(date){
+  const it=(S.meals[date]||{}).items||[];
+  return it.reduce((a,x)=>({k:a.k+x.k,p:a.p+x.p,c:a.c+x.c,l:a.l+x.l,f:a.f+x.f}),{k:0,p:0,c:0,l:0,f:0});
+}
+function nutTargets(){
+  const st=wstats(),h=S.prefs.cm,a=S.prefs.age;
+  if(!st||!h||!a)return{missing:[!st?'o peso (aba Corpo)':null,!h?'a altura':null,!a?'a idade':null].filter(Boolean)};
+  const w=st.last.v,F=isF(),bmr=10*w+6.25*h-5*a+(F?-161:5);
+  const am=avgOf(actWin(todayS(),7),'move');
+  const tdee=am!=null?bmr*1.2+am:bmr*1.4;
+  const perder=modeOf()==='perder',adj=S.prefs.adj!=null?S.prefs.adj:(perder?-20:5);
+  const kcal=Math.max(tdee*(1+adj/100),bmr);
+  const prot=w*(perder?2.0:1.6),fat=0.25*kcal/9,carb=Math.max(0,(kcal-prot*4-fat*9)/4);
+  return{w,bmr,tdee,adj,kcal,prot,fat,carb,fib:14*kcal/1000,am,perder};
+}
+function nutTips(t,T,date){
+  const out=[],it=(S.meals[date]||{}).items||[];
+  if(!it.length){out.push({t:'info',x:'Lance as refeições do dia para ver o saldo de calorias e proteína.'});return out}
+  const rk=t.kcal-T.k;
+  if(rk>=0)out.push({t:'info',x:`Restam cerca de ${fi(rk)} kcal para a meta do dia.`});
+  else out.push({t:Math.abs(rk)>t.kcal*0.1?'warn':'info',x:`${fi(-rk)} kcal acima da meta do dia. Um dia fora não muda a tendência da semana.`});
+  const rp=t.prot-T.p;
+  if(rp>5){const fr=foodGet('t410'),g=fr?rp/fr.p*100:null;
+    out.push({t:'info',x:`Faltam ${fi(rp)} g de proteína.${g?` Cerca de ${fi(g)} g de peito de frango grelhado dariam isso (${f1(fr.p)} g de proteína por 100 g na Tabela TACO).`:''}`})}
+  else out.push({t:'good',x:'Meta de proteína do dia atingida.'});
+  if(T.k>t.kcal*0.5&&T.f<t.fib*0.6)out.push({t:'info',x:`Pouca fibra até agora (${fi(T.f)} g, referência ${fi(t.fib)} g). Feijão, frutas, legumes e verduras ajudam.`});
+  if(t.perder&&T.k>0&&T.k<t.bmr*0.8&&T.k>t.kcal*0.7)out.push({t:'warn',x:'Total do dia bem abaixo do seu metabolismo basal estimado. Cortes extremos custam massa muscular e energia.'});
+  const wk=Array.from({length:7},(_,i)=>addDays(date,-i)).filter(d=>((S.meals[d]||{}).items||[]).length);
+  if(wk.length>=3){const ak=wk.reduce((a,d)=>a+nutTot(d).k,0)/wk.length,ap=wk.reduce((a,d)=>a+nutTot(d).p,0)/wk.length;
+    out.push({t:'info',x:`Média dos últimos ${wk.length} dias lançados: ${fi(ak)} kcal e ${fi(ap)} g de proteína (metas ${fi(t.kcal)} kcal e ${fi(t.prot)} g).`})}
+  return out;
+}
+function nres(){
+  const r=foodSearch(nutQ);
+  if(!nutQ.trim())return'';
+  if(!r.length)return'<p class="fine">Nada encontrado. Use "Alimento personalizado" abaixo com os valores do rótulo.</p>';
+  return r.map(x=>`<button data-fsel="${esc(x.key)}"><b>${esc(x.n)}${x.mine?' (meu)':''}</b><small>${fi(x.k)} kcal · P ${f1(x.p)} · C ${f1(x.c)} · G ${f1(x.l)} (100 g)</small></button>`).join('');
+}
+function npv(){
+  const f=nutSel?foodGet(nutSel):null,g=num(nutG);if(!f||!(g>0))return'';
+  const m=g/100;return`${fi(f.k*m)} kcal · P ${f1(f.p*m)} g · C ${f1(f.c*m)} g · G ${f1(f.l*m)} g`;
+}
+function renderNut(){
+  if(!nutDate)nutDate=todayS();if(!nutMeal)nutMeal=defMeal();
+  const t=nutTargets(),isToday=nutDate===todayS(),T=nutTot(nutDate);
+  let h=roNote()+`<div class="daytitle"><h2>Nutrição</h2><div class="count">${isToday?'hoje':wdOf(nutDate)+' '+brs(nutDate)}</div></div>`;
+  if(t.missing){
+    h+=`<section class="card"><div class="head"><h3>Para calcular suas metas</h3></div><p class="fine" style="font-size:14px">Falta lançar ${t.missing.join(', ')}.</p>
+      <div class="form"><label>Altura (cm)<input type="text" inputmode="numeric" id="n-cm" value="${S.prefs.cm||''}" placeholder="175"></label>
+      <label>Idade<input type="text" inputmode="numeric" id="n-age" value="${S.prefs.age||''}" placeholder="anos"></label>
+      <button class="save" id="savenut">Salvar</button></div></section>`;
+  }else{
+    const sel=[-25,-20,-15,-10,0,5,10].map(v=>`<option value="${v}" ${v===t.adj?'selected':''}>${v>0?'+':''}${v}%</option>`).join('');
+    h+=`<section class="card"><div class="head"><h3>Metas do dia</h3></div>
+      <div class="stats4"><div class="stat"><small>Calorias</small><b>${fi(t.kcal)} kcal</b><span>${t.perder?'para perder gordura':'manter e ganhar massa magra'}</span></div>
+      <div class="stat"><small>Proteína</small><b>${fi(t.prot)} g</b><span>${f1(t.prot/t.w)} g por kg</span></div>
+      <div class="stat"><small>Carboidrato</small><b>${fi(t.carb)} g</b><span>o restante das calorias</span></div>
+      <div class="stat"><small>Gordura</small><b>${fi(t.fat)} g</b><span>cerca de 25% das calorias</span></div></div>
+      <label class="lbl" style="display:grid;gap:4px">Ajuste sobre o gasto estimado<select id="n-adj">${sel}</select></label>
+      <p class="fine">Gasto diário estimado: ${fi(t.tdee)} kcal (metabolismo basal ${fi(t.bmr)} kcal pela equação de Mifflin-St Jeor${t.am!=null?', mais o Movimento médio de '+fi(t.am)+' kcal da aba Atividade':', com fator de atividade leve; lance o Movimento na aba Atividade para refinar'}). É uma estimativa, com margem de erro de 10 a 15%. Proteína dentro da faixa de 1,4 a 2,0 g/kg da posição da ISSN para quem treina. Fibra de referência: ${fi(t.fib)} g.</p></section>`;
+  }
+  const pbar=(lbl,v,g,u)=>g?`<div class="goal"><div class="row"><span>${lbl}</span><span>${fi(v)} de ${fi(g)} ${u}</span></div><div class="bar"><i style="width:${clamp(v/g*100,0,100)}%"></i></div></div>`:`<div class="goal"><div class="row"><span>${lbl}</span><span>${fi(v)} ${u}</span></div></div>`;
+  h+=`<section class="card"><div class="head"><button class="ghost" data-nutd="-1">‹ Anterior</button><button class="ghost" data-nutd="1" ${isToday?'disabled':''}>Próximo ›</button></div>
+    ${pbar('Calorias',T.k,t.kcal,'kcal')}${pbar('Proteína',T.p,t.prot,'g')}${pbar('Carboidrato',T.c,t.carb,'g')}${pbar('Gordura',T.l,t.fat,'g')}${pbar('Fibra',T.f,t.fib,'g')}</section>`;
+  if(!t.missing){const ti=nutTips(t,T,nutDate);h+=`<section class="card"><div class="head"><h3>Leitura do dia</h3></div><ul class="ins">${ti.map(i=>`<li class="${i.t}">${esc(i.x)}</li>`).join('')}</ul></section>`}
+  const f=nutSel?foodGet(nutSel):null;
+  h+=`<section class="card"><div class="head"><h3>Adicionar alimento</h3></div>
+    <div class="chips" role="group" aria-label="Refeição">${MEALS.map(([k,n])=>`<button data-nm="${k}" aria-pressed="${nutMeal===k}">${n}</button>`).join('')}</div>
+    <input type="text" id="n-q" class="srch" placeholder="Buscar: arroz, frango, ovo, banana…" value="${esc(nutQ)}" autocomplete="off" aria-label="Buscar alimento">
+    <div class="fres" id="nres">${nres()}</div>
+    <div id="nsel">${f?`<div class="panel"><h4>${esc(f.n)}</h4><div class="q"><input type="text" inputmode="decimal" id="n-g" value="${esc(nutG)}" aria-label="Quantidade em gramas"><button data-nadd="1">Adicionar</button></div><p class="fine" id="npv">${npv()}</p><p class="fine">Quantidade em gramas, como vem na balança. Os valores da Tabela TACO são por 100 g.</p></div>`:''}</div>
+    <details id="cf"><summary>Alimento personalizado (valores do rótulo, por 100 g)</summary><div class="form" style="margin-top:12px">
+      <label class="wide">Nome<input type="text" id="cf-n" placeholder="Whey, pão da padaria…"></label>
+      <label>Calorias (kcal)<input type="text" inputmode="decimal" id="cf-k"></label><label>Proteína (g)<input type="text" inputmode="decimal" id="cf-p"></label>
+      <label>Carboidrato (g)<input type="text" inputmode="decimal" id="cf-c"></label><label>Gordura (g)<input type="text" inputmode="decimal" id="cf-l"></label>
+      <label class="wide">Fibra (g, opcional)<input type="text" inputmode="decimal" id="cf-f"></label>
+      <button class="save" id="savefood">Salvar alimento</button></div>
+      ${Object.keys(S.foods).length?`<div class="hist" style="margin-top:8px">${Object.entries(S.foods).map(([k,x])=>`<div><span>${esc(x.n)}</span><b>${fi(x.k)} kcal</b><button class="del" data-fdel="${k}">Excluir</button></div>`).join('')}</div>`:''}</details></section>`;
+  const items=(S.meals[nutDate]||{}).items||[];
+  h+=`<section class="card"><div class="head"><h3>Refeições</h3></div>`+(items.length?MEALS.map(([k,n])=>{
+    const L=items.filter(x=>x.m===k);if(!L.length)return'';
+    const sk=L.reduce((a,x)=>a+x.k,0);
+    return`<div class="meal"><div class="mh"><b>${n}</b><span>${fi(sk)} kcal</span></div>${L.map(x=>`<div class="mi"><span>${esc(x.n)}<small>${fi(x.g)} g · P ${f1(x.p)} · C ${f1(x.c)} · G ${f1(x.l)}</small></span><b>${fi(x.k)}</b><button class="del" data-mdel="${x.u}">Excluir</button></div>`).join('')}</div>`}).join(''):'<p class="fine">Nada lançado neste dia.</p>')+`</section>`;
+  h+=`<section class="card"><details id="sup"><summary>Suplementação: o que tem evidência</summary><div class="sup">
+    <p class="fine">Informação geral baseada em posições de sociedades científicas. Não substitui consulta com nutricionista, nutrólogo ou médico. Se você tem doença (principalmente renal, cardíaca ou hipertensão), usa medicamentos, está grávida ou amamentando, converse com um profissional antes de qualquer suplemento.</p>
+    <div class="sp"><b>Creatina monohidratada, 3 a 5 g por dia</b><span>É o suplemento com mais evidência para força e massa magra e é considerado seguro para adultos saudáveis. Vale tomar todos os dias, com ou sem treino. <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5469049/" target="_blank" rel="noopener">ISSN, 2017</a></span></div>
+    <div class="sp"><b>Proteína em pó (whey), só para completar a meta${t.missing?'':' · hoje faltam '+fi(Math.max(0,t.prot-T.p))+' g'}</b><span>Não é obrigatória. Serve quando a comida não fecha a meta de proteína do dia. A faixa de 1,4 a 2,0 g/kg é a referência para quem treina. <a href="https://pubmed.ncbi.nlm.nih.gov/28642676/" target="_blank" rel="noopener">ISSN, 2017</a></span></div>
+    <div class="sp"><b>Cafeína, 3 a 6 mg por kg, cerca de 60 minutos antes do treino${t.missing?'':' · '+fi(3*t.w)+' a '+fi(6*t.w)+' mg para você'}</b><span>Melhora o desempenho em vários tipos de exercício. Comece pela dose baixa. Evite no fim da tarde e à noite por causa do sono. A autoridade europeia (EFSA) considera seguro até 400 mg por dia e 200 mg de uma vez para adultos saudáveis; na gravidez e amamentação o limite é 200 mg por dia. <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7777221/" target="_blank" rel="noopener">ISSN, 2021</a> · <a href="https://efsa.europa.eu/en/efsajournal/pub/4102" target="_blank" rel="noopener">EFSA</a></span></div>
+    <div class="sp"><b>Vitamina D, ferro, ômega-3, multivitamínico e outros</b><span>Só com exame de sangue ou indicação profissional. Sem deficiência comprovada, o benefício não é garantido e alguns têm risco em excesso. Por isso o app não sugere doses.</span></div></div></details></section>`;
+  h+=`<p class="fine">Valores dos alimentos: Tabela Brasileira de Composição de Alimentos (TACO), NEPA/Unicamp, por 100 g. Alguns itens, como o leite, não têm valores na tabela: use "Alimento personalizado" com o rótulo. O app é uma ferramenta de acompanhamento, não prescrição de dieta.</p>`;
+  $('#main').innerHTML=h;
+}
+function updateNutRes(){const r=document.getElementById('nres');if(r)r.innerHTML=nres()}
+
 /* ---------- gráficos ---------- */
 function chart(ser,unit,target){
   if(ser.length<2)return'<p class="fine">Lance pelo menos dois registros para ver o gráfico.</p>';
@@ -628,7 +739,7 @@ function render(){
   if(esc_){renderEscolha();setStatus();return}
   document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.view===view));
   $('#trainnav').hidden=view!=='treino';
-  if(view==='treino'){renderHeader();renderDay()}else if(view==='corpo')renderCorpo();else if(view==='ativ')renderAtiv();else renderJornada();
+  if(view==='treino'){renderHeader();renderDay()}else if(view==='corpo')renderCorpo();else if(view==='ativ')renderAtiv();else if(view==='nut')renderNut();else renderJornada();
   setStatus();
 }
 
@@ -664,6 +775,26 @@ document.addEventListener('click',async ev=>{
     const m=nv('g-move'),e=nv('g-ex'),s=nv('g-steps'),g=Object.assign({},S.prefs.goals||{});
     if(m>0&&m<5000)g.move=Math.round(m);if(e>0&&e<600)g.ex=Math.round(e);if(s>0&&s<100000)g.steps=Math.round(s);
     S.prefs.goals=g;persist('state/prefs');renderAtiv();return}
+  if(t.dataset.nutd){const n=addDays(nutDate||todayS(),+t.dataset.nutd);if(n<=todayS()){nutDate=n;renderNut()}return}
+  if(t.dataset.nm){nutMeal=t.dataset.nm;renderNut();return}
+  if(t.dataset.fsel){nutSel=t.dataset.fsel;nutG='100';renderNut();setTimeout(()=>{const g=document.getElementById('n-g');if(g){g.focus();g.select()}},50);return}
+  if(t.dataset.nadd){
+    const f=nutSel?foodGet(nutSel):null,g=nv('n-g');
+    if(!f||!(g>0&&g<=5000)){t.textContent='Confira a quantidade';setTimeout(()=>{t.textContent='Adicionar'},1800);return}
+    const m=g/100,r1=x=>Math.round(x*10)/10,date=nutDate||todayS(),doc=S.meals[date]||(S.meals[date]={d:date,items:[]});
+    doc.items.push({u:Date.now().toString(36)+Math.floor(Math.random()*1e3).toString(36),m:nutMeal||defMeal(),k:Math.round(f.k*m),p:r1(f.p*m),c:r1(f.c*m),l:r1(f.l*m),f:r1(f.f*m),n:f.n,g:Math.round(g*10)/10});
+    persist('meals/'+date);nutSel=null;nutQ='';renderNut();window.scrollTo(0,0);return}
+  if(t.dataset.mdel){const date=nutDate||todayS(),doc=S.meals[date];if(doc){doc.items=doc.items.filter(x=>x.u!==t.dataset.mdel);persist('meals/'+date);renderNut()}return}
+  if(t.id==='savefood'){
+    const n=(document.getElementById('cf-n').value||'').trim(),k=nv('cf-k'),p=nv('cf-p'),c=nv('cf-c'),l=nv('cf-l'),fb=nv('cf-f');
+    if(!n||!(k>=0&&k<1000)||[p,c,l].some(x=>!(x>=0&&x<=100))){t.textContent='Confira os valores';setTimeout(()=>{t.textContent='Salvar alimento'},2000);return}
+    const id='c'+Date.now().toString(36);S.foods[id]={n,k:Math.round(k),p,c,l,f:isNaN(fb)?0:fb};persist('state/foods');nutSel=id;nutG='100';renderNut();return}
+  if(t.dataset.fdel){delete S.foods[t.dataset.fdel];if(nutSel===t.dataset.fdel)nutSel=null;persist('state/foods');renderNut();return}
+  if(t.id==='savenut'){
+    const cm=nv('n-cm'),age=nv('n-age');
+    if(!isNaN(cm)&&cm>100&&cm<250)S.prefs.cm=Math.round(cm);
+    if(!isNaN(age)&&age>10&&age<110)S.prefs.age=Math.round(age);
+    persist('state/prefs');renderNut();return}
   if(t.id==='ivstart'){startInterval();return}
   if(t.dataset.comp){compSel=t.dataset.comp;renderCorpo();return}
   if(t.dataset.set!==undefined){
@@ -717,12 +848,15 @@ document.addEventListener('keydown',ev=>{const z=ev.target.closest&&ev.target.cl
 document.addEventListener('input',ev=>{
   const i=ev.target;if(!i.id&&!(i.dataset&&i.dataset.kg!==undefined))return;
   if(i.dataset&&i.dataset.kg!==undefined){S.loads[i.dataset.kg]=i.value;persist('state/loads');return}
+  if(i.id==='n-q'){nutQ=i.value;updateNutRes();return}
+  if(i.id==='n-g'){nutG=i.value;const p=document.getElementById('npv');if(p)p.textContent=npv();return}
   if(i.id&&i.id.startsWith('a-')){const k=i.id.slice(2),a=ACT.find(x=>x[0]===k);if(a){const v=num(i.value);
     diaryPatch({[k]:i.value.trim()===''?null:(v>=0&&v<=a[3]?(k==='km'?Math.round(v*100)/100:Math.round(v)):undefined)},actDate||todayS());updateAct()}return}
   if(i.id==='ci-sono'){const v=num(i.value);diaryPatch({sono:i.value.trim()===''?null:(v>0&&v<24?v:undefined)});return}
   if(i.id==='ci-cardio'){const v=num(i.value);diaryPatch({cardio:i.value.trim()===''?null:(v>=0&&v<600?Math.round(v):undefined)})}
 });
 document.addEventListener('focusout',ev=>{if(view==='ativ'&&ev.target.id&&ev.target.id.startsWith('a-'))setTimeout(()=>{if(view==='ativ'&&(!document.activeElement||document.activeElement.tagName!=='INPUT'))renderAtiv()},80)});
+document.addEventListener('change',ev=>{if(ev.target.id==='n-adj'){S.prefs.adj=+ev.target.value;persist('state/prefs');renderNut()}});
 document.addEventListener('toggle',ev=>{if(ev.target.id==='fm')formOpen=ev.target.open},true);
 async function wake(){try{if(navigator.wakeLock&&document.visibilityState==='visible')await navigator.wakeLock.request('screen')}catch(e){}}
 document.addEventListener('visibilitychange',wake);wake();
