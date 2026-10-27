@@ -148,7 +148,7 @@ function setProfile(pid){
   try{localStorage.setItem('trinca:pid',pid)}catch(e){}
   loadLocal();
   if(dbState==='local')seedDefaults();
-  view='treino';sel='cintura';formOpen=false;weekTouched=false;compSel='lean';
+  view='treino';actDate=null;sel='cintura';formOpen=false;weekTouched=false;compSel='lean';
   week=curWeek();di=TODAY;
   subscribe();render();
 }
@@ -232,6 +232,7 @@ function compMissing(){
 }
 
 /* ---------- treino ---------- */
+let actDate=null;
 let week=1,di=TODAY,view='escolha',sel='cintura',formOpen=false,weekTouched=false,compSel='lean';
 function bandIdx(){const i=D.bands.findIndex(b=>week<=b);return i<0?D.bands.length-1:i}
 function presc(e){return e.p[bandIdx()]}
@@ -256,8 +257,8 @@ function kneeMsg(n){
   if(n===3)return['warn','No limite do tolerável (até 3/10). Reduza carga ou amplitude e observe como fica amanhã.'];
   return['bad','Acima de 3/10: pelo plano, reduza ou pare e procure avaliação de fisioterapeuta ou médico.'];
 }
-function diaryPatch(patch){
-  const t=todayS(),r=S.diary[t]||(S.diary[t]={d:t});
+function diaryPatch(patch,date){
+  const t=date||todayS(),r=S.diary[t]||(S.diary[t]={d:t});
   Object.keys(patch).forEach(k=>{if(patch[k]==null)delete r[k];else r[k]=patch[k]});
   persist('diary/'+t);
 }
@@ -336,6 +337,76 @@ function startInterval(){
 }
 $('#plus').onclick=()=>{left=Math.max(left,0)+15;$('#rest').classList.remove('end');$('#clock').textContent=fmt(left);if(!timer)timer=setInterval(tick,1000)};
 $('#stop').onclick=()=>{clearInterval(timer);timer=null;$('#rest').classList.remove('on','iv','end')};
+
+/* ---------- atividade (Apple Watch / Saúde, lançamento manual) ---------- */
+const GOAL0={move:500,ex:30,steps:8000};
+const goalsOf=()=>Object.assign({},GOAL0,S.prefs.goals||{});
+const WD=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+const wdOf=d=>WD[new Date(tms(d)).getUTCDay()];
+const ACT=[['move','Movimento','kcal',5000,'500'],['ex','Exercício','min',600,'30'],['steps','Passos','',100000,'8000'],['km','Distância','km',200,'5,0'],['fl','Lances de escada','',1000,'10'],['wk','Calorias do treino','kcal',5000,'250']];
+function actWin(end,n){return Array.from({length:n},(_,i)=>addDays(end,-i)).map(d=>Object.assign({d},S.diary[d]||{}))}
+function avgOf(rows,k){const v=rows.filter(r=>r[k]!=null);return v.length?v.reduce((a,r)=>a+r[k],0)/v.length:null}
+const sumOf=(rows,k)=>rows.reduce((a,r)=>a+(r[k]||0),0);
+const fi=n=>Math.round(n).toLocaleString('pt-BR');
+function actTips(){
+  const g=goalsOf(),cur=actWin(actDate,7),prev=actWin(addDays(actDate,-7),7),out=[];
+  const logged=cur.filter(r=>ACT.some(a=>r[a[0]]!=null)).length;
+  if(logged<3){out.push({t:'info',x:'Lance a atividade de pelo menos 3 dias da semana para as dicas aparecerem.'});return out}
+  const am=avgOf(cur,'move'),ae=avgOf(cur,'ex'),as=avgOf(cur,'steps'),ps=avgOf(prev,'steps');
+  const exDays=cur.filter(r=>r.ex!=null&&r.ex>=g.ex).length;
+  if(am!=null){const p=am/g.move;
+    out.push(p>=1?{t:'good',x:`Movimento médio de ${fi(am)} kcal por dia, acima da meta de ${fi(g.move)}.`}
+      :p<0.7?{t:'warn',x:`Movimento médio de ${fi(am)} kcal por dia, abaixo de 70% da meta (${fi(g.move)}). Uma caminhada de 20 a 30 minutos nos dias mais parados ajuda a recuperar.`}
+      :{t:'info',x:`Movimento médio de ${fi(am)} kcal por dia, perto da meta de ${fi(g.move)}.`})}
+  if(ae!=null)out.push(exDays>=5?{t:'good',x:`${exDays} de 7 dias com ${g.ex} minutos de exercício ou mais.`}
+    :exDays>=3?{t:'info',x:`${exDays} de 7 dias com ${g.ex} minutos de exercício ou mais. Mais um dia leve já ajuda.`}
+    :{t:'warn',x:`Só ${exDays} de 7 dias com ${g.ex} minutos de exercício. Os treinos e as caminhadas leves contam.`});
+  if(as!=null&&ps!=null&&ps>0){const ch=(as-ps)/ps*100;
+    if(ch<=-15)out.push({t:'warn',x:`Passos médios ${fi(as)} por dia, ${fi(Math.abs(ch))}% menos que na semana anterior.`});
+    else if(ch>=15){
+      if(D.knee&&ch>=30)out.push({t:'warn',x:`Passos médios subiram ${fi(ch)}% em relação à semana anterior. Aumente aos poucos e observe o joelho no dia seguinte.`});
+      else out.push({t:'good',x:`Passos médios ${fi(as)} por dia, ${fi(ch)}% a mais que na semana anterior.`})}
+  }else if(as!=null)out.push({t:as>=g.steps?'good':'info',x:`Passos médios de ${fi(as)} por dia${as>=g.steps?', acima da meta':' (meta '+fi(g.steps)+')'}.`});
+  const st=wstats();
+  if(modeOf()==='perder'&&st&&st.wk!=null&&Math.abs(st.wk)<0.2&&am!=null&&am<g.move)out.push({t:'warn',x:'Peso parado há uma semana e Movimento abaixo da meta. Antes de mexer no treino, tente subir o movimento diário.'});
+  const sono=avgOf(cur,'sono');
+  if(sono!=null&&sono<6.5)out.push({t:'info',x:`Sono médio de ${f1(sono)} h na semana. Com pouco sono a recuperação cai: evite aumentar a carga junto.`});
+  const wk=sumOf(cur,'wk'),km=sumOf(cur,'km'),fl=sumOf(cur,'fl'),pt=[];
+  if(wk>0)pt.push(fi(wk)+' kcal em treinos');if(km>0)pt.push(f1(km)+' km percorridos');if(fl>0)pt.push(fi(fl)+' lances de escada');
+  if(pt.length)out.push({t:'info',x:'Na semana: '+pt.join(', ')+'.'});
+  const fp=sumOf(prev,'fl');
+  if(D.knee&&fl>=30&&fl>fp*1.3)out.push({t:'warn',x:'Muitos lances de escada para o joelho nesta semana. Se doer, prefira o elevador por alguns dias e siga a regra de dor do plano.'});
+  return out;
+}
+function renderAtiv(){
+  if(!actDate)actDate=todayS();
+  const r=S.diary[actDate]||{},g=goalsOf(),isToday=actDate===todayS();
+  const bar=(k,v,goal,unit)=>goal?`<div class="goal"><div class="row"><span id="at-${k}">${v!=null?fi(v)+' de '+fi(goal)+' '+unit:'Meta '+fi(goal)+' '+unit}</span></div><div class="bar"><i id="ab-${k}" style="width:${v!=null?clamp(v/goal*100,0,100):0}%"></i></div></div>`:'';
+  let h=roNote()+`<div class="daytitle"><h2>Atividade</h2><div class="count">${isToday?'hoje':wdOf(actDate)+' '+brs(actDate)}</div></div>`;
+  h+=`<section class="card"><div class="head"><button class="ghost" data-actd="-1" aria-label="Dia anterior">‹ Anterior</button><button class="ghost" data-actd="1" ${isToday?'disabled':''} aria-label="Próximo dia">Próximo ›</button></div>
+    <p class="fine">Copie do app Saúde (iPhone) ou do Apple Watch. Tudo é opcional.</p>
+    <div class="form">${ACT.map(([k,n,u,mx,ph],i)=>`<label>${n}${u?' ('+u+')':''}<input type="text" inputmode="decimal" id="a-${k}" value="${r[k]!=null?(k==='km'?f1(r[k]):r[k]):''}" placeholder="${ph}"></label>`).join('')}</div>
+    ${bar('move',r.move,g.move,'kcal')}${bar('ex',r.ex,g.ex,'min')}${bar('steps',r.steps,g.steps,'passos')}</section>`;
+  const ti=actTips();
+  h+=`<section class="card"><div class="head"><h3>Leitura da semana</h3></div><ul class="ins">${ti.map(i=>`<li class="${i.t}">${esc(i.x)}</li>`).join('')}</ul></section>`;
+  const rows=actWin(actDate,7);
+  h+=`<section class="card"><div class="head"><h3>Últimos 7 dias</h3></div><div class="hist2"><div class="arow ahead"><span>Dia</span><span>Mov.</span><span>Min</span><span>Passos</span><span>Km</span></div>`
+    +rows.map(x=>`<div class="arow"><span>${wdOf(x.d)} ${brs(x.d)}</span><span>${x.move!=null?fi(x.move):'–'}</span><span>${x.ex!=null?fi(x.ex):'–'}</span><span>${x.steps!=null?fi(x.steps):'–'}</span><span>${x.km!=null?f1(x.km):'–'}</span></div>`).join('')
+    +`<div class="arow ahead"><span>Média</span><span>${avgOf(rows,'move')!=null?fi(avgOf(rows,'move')):'–'}</span><span>${avgOf(rows,'ex')!=null?fi(avgOf(rows,'ex')):'–'}</span><span>${avgOf(rows,'steps')!=null?fi(avgOf(rows,'steps')):'–'}</span><span>${avgOf(rows,'km')!=null?f1(avgOf(rows,'km')):'–'}</span></div></div></section>`;
+  h+=`<section class="card"><details id="gl"><summary>Metas diárias</summary><div class="form" style="margin-top:12px">
+    <label>Movimento (kcal)<input type="text" inputmode="numeric" id="g-move" value="${g.move}"></label>
+    <label>Exercício (min)<input type="text" inputmode="numeric" id="g-ex" value="${g.ex}"></label>
+    <label class="wide">Passos<input type="text" inputmode="numeric" id="g-steps" value="${g.steps}"></label>
+    <button class="save" id="savegoals">Salvar metas</button></div></details></section>`;
+  $('#main').innerHTML=h;
+}
+function updateAct(){
+  const r=S.diary[actDate]||{},g=goalsOf();
+  [['move','kcal'],['ex','min'],['steps','passos']].forEach(([k,u])=>{
+    const t=document.getElementById('at-'+k),b=document.getElementById('ab-'+k);
+    if(t)t.textContent=r[k]!=null?fi(r[k])+' de '+fi(g[k])+' '+u:'Meta '+fi(g[k])+' '+u;
+    if(b)b.style.width=(r[k]!=null?clamp(r[k]/g[k]*100,0,100):0)+'%'});
+}
 
 /* ---------- gráficos ---------- */
 function chart(ser,unit,target){
@@ -533,6 +604,8 @@ function renderJornada(){
     const cardio=sum('cardio').reduce((a,b)=>a+b,0),sono=sum('sono'),en=sum('en'),kn=sum('knee');
     const bits=[];
     if(sum('cardio').length)bits.push('Cardio '+cardio+' min');
+    if(sum('steps').length)bits.push('Passos méd. '+fi(sum('steps').reduce((a,b)=>a+b,0)/sum('steps').length));
+    if(sum('move').length)bits.push('Mov. méd. '+fi(sum('move').reduce((a,b)=>a+b,0)/sum('move').length)+' kcal');
     if(sono.length)bits.push('Sono '+f1(sono.reduce((a,b)=>a+b,0)/sono.length)+' h');
     if(en.length)bits.push('Energia '+f1(en.reduce((a,b)=>a+b,0)/en.length));
     if(D.knee&&kn.length)bits.push('Joelho máx '+Math.max(...kn));
@@ -555,7 +628,7 @@ function render(){
   if(esc_){renderEscolha();setStatus();return}
   document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.view===view));
   $('#trainnav').hidden=view!=='treino';
-  if(view==='treino'){renderHeader();renderDay()}else if(view==='corpo')renderCorpo();else renderJornada();
+  if(view==='treino'){renderHeader();renderDay()}else if(view==='corpo')renderCorpo();else if(view==='ativ')renderAtiv();else renderJornada();
   setStatus();
 }
 
@@ -586,6 +659,11 @@ document.addEventListener('click',async ev=>{
   if(t.dataset.d){di=+t.dataset.d;renderHeader();renderDay();return}
   if(t.dataset.en){const n=+t.dataset.en,r=S.diary[todayS()]||{};diaryPatch({en:r.en===n?null:n});renderDay();return}
   if(t.dataset.knee){const n=+t.dataset.knee,r=S.diary[todayS()]||{};diaryPatch({knee:r.knee===n?null:n});renderDay();return}
+  if(t.dataset.actd){const n=addDays(actDate||todayS(),+t.dataset.actd);if(n<=todayS()){actDate=n;renderAtiv()}return}
+  if(t.id==='savegoals'){
+    const m=nv('g-move'),e=nv('g-ex'),s=nv('g-steps'),g=Object.assign({},S.prefs.goals||{});
+    if(m>0&&m<5000)g.move=Math.round(m);if(e>0&&e<600)g.ex=Math.round(e);if(s>0&&s<100000)g.steps=Math.round(s);
+    S.prefs.goals=g;persist('state/prefs');renderAtiv();return}
   if(t.id==='ivstart'){startInterval();return}
   if(t.dataset.comp){compSel=t.dataset.comp;renderCorpo();return}
   if(t.dataset.set!==undefined){
@@ -639,9 +717,12 @@ document.addEventListener('keydown',ev=>{const z=ev.target.closest&&ev.target.cl
 document.addEventListener('input',ev=>{
   const i=ev.target;if(!i.id&&!(i.dataset&&i.dataset.kg!==undefined))return;
   if(i.dataset&&i.dataset.kg!==undefined){S.loads[i.dataset.kg]=i.value;persist('state/loads');return}
+  if(i.id&&i.id.startsWith('a-')){const k=i.id.slice(2),a=ACT.find(x=>x[0]===k);if(a){const v=num(i.value);
+    diaryPatch({[k]:i.value.trim()===''?null:(v>=0&&v<=a[3]?(k==='km'?Math.round(v*100)/100:Math.round(v)):undefined)},actDate||todayS());updateAct()}return}
   if(i.id==='ci-sono'){const v=num(i.value);diaryPatch({sono:i.value.trim()===''?null:(v>0&&v<24?v:undefined)});return}
   if(i.id==='ci-cardio'){const v=num(i.value);diaryPatch({cardio:i.value.trim()===''?null:(v>=0&&v<600?Math.round(v):undefined)})}
 });
+document.addEventListener('focusout',ev=>{if(view==='ativ'&&ev.target.id&&ev.target.id.startsWith('a-'))setTimeout(()=>{if(view==='ativ'&&(!document.activeElement||document.activeElement.tagName!=='INPUT'))renderAtiv()},80)});
 document.addEventListener('toggle',ev=>{if(ev.target.id==='fm')formOpen=ev.target.open},true);
 async function wake(){try{if(navigator.wakeLock&&document.visibilityState==='visible')await navigator.wakeLock.request('screen')}catch(e){}}
 document.addEventListener('visibilitychange',wake);wake();
