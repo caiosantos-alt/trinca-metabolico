@@ -1,6 +1,5 @@
 const PROFILES={
-  caio:{pid:'caio',nome:'Caio',pfx:'',ls:'trinca:v2',sex:'M',mode:'perder',attr:'',sub:'Perda de gordura, força e ombros'},
-  munique:{pid:'munique',nome:'Munique',pfx:'m_',ls:'trinca:v2:m',sex:'F',mode:'manter',attr:'m',sub:'Condicionamento, corrida e saúde'}
+  caio:{pid:'caio',nome:'Caio',pfx:'',ls:'trinca:v2',sex:'M',mode:'perder',attr:'',sub:'Perda de gordura, força e ombros'}
 };
 const DAYS=[['Seg','Segunda',1],['Ter','Terça',2],['Qua','Quarta',3],['Qui','Quinta',4],['Sex','Sexta',5],['Sáb','Sábado',6],['Dom','Domingo',0]];
 const LETTER={Seg:'A',Qua:'B',Sex:'C','Sáb':'D'};
@@ -100,13 +99,7 @@ function applyColl(name,snap){
   if(dbState==='init')dbState='ok';
   setStatus();if(ch)softRender();
 }
-function seedDefaults(){
-  if(!P||P.pid!=='munique'||S.prefs.seeded)return;
-  const st=mondayOf(todayS());
-  S.prefs=Object.assign({cm:172,sex:'F',mode:'manter',start:st,seeded:true},S.prefs);
-  if(!Object.keys(S.log).length){S.log[st]={d:st,kg:61,c:{}};persist('log/'+st)}
-  persist('state/prefs');softRender();
-}
+function seedDefaults(){}
 function applyDoc(kind,snap){
   const path='state/'+kind,pending=pend.has(path),mk=kind==='loads'?'loads':kind==='foods'?'foods':null;
   const d=snap.exists?snap.data():null;
@@ -706,7 +699,11 @@ function renderCorpo(){
     <label>Objetivo<select id="s-mode"><option value="perder" ${modeOf()==='perder'?'selected':''}>Perder gordura</option><option value="manter" ${modeOf()==='manter'?'selected':''}>Manter e ganhar massa magra</option></select></label>
     <button class="save" id="saveset">Salvar ajustes</button>
     <button class="ghost" id="goal5" ${st?'':'disabled'}>Usar meta de −5 kg</button>
-    <button class="ghost" id="csv" ${log.length?'':'disabled'}>Baixar CSV</button></div></details></section>`;
+    <button class="ghost" id="csv" ${log.length?'':'disabled'}>Baixar CSV</button></div></details>
+    <details style="margin-top:10px"><summary>Alterar PIN de acesso</summary><div class="form" style="margin-top:12px">
+    <label>Novo PIN (4 a 6 números)<input type="password" inputmode="numeric" maxlength="6" id="pin-a" autocomplete="off"></label>
+    <label>Repetir novo PIN<input type="password" inputmode="numeric" maxlength="6" id="pin-b" autocomplete="off"></label>
+    <button class="save" id="chpin">Alterar PIN</button><p class="fine" id="pin-msg">Outros aparelhos serão desconectados e vão pedir o novo PIN.</p></div></details></section>`;
   $('#main').innerHTML=h;
 }
 
@@ -739,11 +736,7 @@ function renderJornada(){
   h+=`</section><p class="fine">Os treinos contam quando todas as séries mínimas do dia estão marcadas. Peso e cintura vêm dos registros do Corpo e cardio, sono e energia vêm do check-in, tudo agrupado pela semana do programa.</p>`;
   $('#main').innerHTML=h;
 }
-function renderEscolha(){
-  $('#main').innerHTML=`<div class="pick"><h2>Quem vai treinar agora?</h2><p>Cada um tem seu plano, suas medidas e sua cor. Dá para trocar a qualquer momento tocando no nome lá em cima.</p>
-    <button class="c" data-pick="caio"><span class="n">Caio</span><small>${PROFILES.caio.sub}</small></button>
-    <button class="m" data-pick="munique"><span class="n">Munique</span><small>${PROFILES.munique.sub}</small></button></div>`;
-}
+function renderEscolha(){$('#main').innerHTML=''}
 function render(){
   const esc_=view==='escolha'||!P;
   $('#tabs').hidden=esc_;
@@ -774,8 +767,6 @@ document.addEventListener('click',async ev=>{
   const z=ev.target.closest('[data-z]');
   if(z){sel=z.dataset.z;renderCorpo();document.querySelector('.panel')?.scrollIntoView({block:'nearest',behavior:'smooth'});return}
   const t=ev.target.closest('button');if(!t)return;
-  if(t.dataset.pick){setProfile(t.dataset.pick);window.scrollTo(0,0);return}
-  if(t.id==='who'){view='escolha';render();window.scrollTo(0,0);return}
   if(t.id==='sync'){if(dbState==='error'&&db){dirty.forEach(p=>flush(p));dbState='ok';setStatus()}return}
   if(t.dataset.view){view=t.dataset.view;render();window.scrollTo(0,0);return}
   if(t.dataset.w){week=+t.dataset.w;weekTouched=true;renderHeader();renderDay();t.scrollIntoView({inline:'center',block:'nearest'});return}
@@ -858,6 +849,19 @@ document.addEventListener('click',async ev=>{
     if(!isNaN(age)&&age>10&&age<110)S.prefs.age=Math.round(age);
     S.prefs.sex=document.getElementById('s-sex').value;S.prefs.mode=document.getElementById('s-mode').value;
     persist('state/prefs');if(!weekTouched)week=curWeek();renderCorpo();return}
+  if(t.id==='chpin'){
+    const a=document.getElementById('pin-a').value,b=document.getElementById('pin-b').value,m=document.getElementById('pin-msg');
+    if(!/^\d{4,6}$/.test(a)){m.textContent='Use de 4 a 6 números.';return}
+    if(a!==b){m.textContent='Os dois PINs não são iguais.';return}
+    try{
+      const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('trinca:'+a));
+      const h=Array.from(new Uint8Array(buf)).map(x=>x.toString(16).padStart(2,'0')).join('');
+      await db.collection('_cfg').doc('pin').set({h:h});
+      try{localStorage.setItem('trinca:ok',h)}catch(e){}
+      m.textContent='PIN alterado. Os outros aparelhos vão pedir o novo PIN.';
+      document.getElementById('pin-a').value='';document.getElementById('pin-b').value='';
+    }catch(e){m.textContent='Falha ao salvar. Tente de novo.'}
+    return}
   if(t.id==='goal5'){const st=wstats();if(st){S.prefs.goal=Math.round((st.first.v-5)*10)/10;persist('state/prefs');renderCorpo()}return}
   if(t.id==='csv'){
     let dl=null;try{dl=window.claude&&window.claude.use?await window.claude.use('downloads'):null}catch(e){}
@@ -887,4 +891,4 @@ document.addEventListener('visibilitychange',wake);wake();
 let saved=null;try{saved=localStorage.getItem('trinca:pid')}catch(e){}
 render();
 initDb();
-if(saved&&PROFILES[saved])setProfile(saved);
+setProfile('caio');
