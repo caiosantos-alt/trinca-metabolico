@@ -23,22 +23,24 @@
     setTimeout(function(){var i=document.getElementById('pi');if(i)i.focus()},50);
   }
   function fail(){box.innerHTML='<h2>Sem conexão</h2><p>Não consegui falar com o servidor.</p><button id="pb">Tentar de novo</button>';document.getElementById('pb').onclick=function(){location.reload()}}
-  window.claude.use('db').then(function(db){
-    if(!db)return fail();
-    var u=db.collection('_cfg').doc('pin').onSnapshot(function(s){
-      if(u)u();u=null;
-      var cur=s.exists?s.data().h:null,ok=null;
-      try{ok=localStorage.getItem('trinca:ok')}catch(e){}
-      if(cur&&ok===cur)return unlock();
-      if(!cur){
-        ask('Primeiro acesso: crie um PIN de 4 a 6 números. Vocês dois vão usar o mesmo.','Criar PIN',function(p,e){
-          hash(p).then(function(h){return db.collection('_cfg').doc('pin').set({h:h}).then(function(){try{localStorage.setItem('trinca:ok',h)}catch(x){}unlock()})}).catch(function(){e.textContent='Falha ao salvar. Tente de novo.'})
-        },true);
-      }else{
-        ask('Digite o PIN para entrar.','Entrar',function(p,e){
-          hash(p).then(function(h){if(h===cur){try{localStorage.setItem('trinca:ok',h)}catch(x){}unlock()}else e.textContent='PIN incorreto.'})
-        });
-      }
-    },fail);
-  },fail);
+  var A=window.__auth;
+  if(!A)return fail();
+  function enter(r,e){
+    if(r.st==='ok'){A.save(r.tok);unlock();return}
+    if(r.st==='locked'){e.textContent='Muitas tentativas. Aguarde '+(r.wait>90?Math.ceil(r.wait/60)+' min':r.wait+' s')+'.';return}
+    if(r.st==='bad'){e.textContent='PIN incorreto.'+(r.wait?' Aguarde '+(r.wait>90?Math.ceil(r.wait/60)+' min':r.wait+' s')+'.':(r.left<=2?' Restam '+r.left+' tentativas antes do bloqueio.':''));return}
+    e.textContent='Não foi possível entrar. Tente de novo.';
+  }
+  A.status().then(function(s){
+    if(s.ok)return unlock();
+    if(!s.has){
+      ask('Primeiro acesso: crie um PIN de 4 a 6 números.','Criar PIN',function(p,e){
+        hash(p).then(function(h){return A.create(h)}).then(function(r){enter(r,e)}).catch(function(){e.textContent='Falha ao salvar. Tente de novo.'})
+      },true);
+    }else{
+      ask('Digite o PIN para entrar.','Entrar',function(p,e){
+        hash(p).then(function(h){return A.login(h)}).then(function(r){enter(r,e)}).catch(function(){e.textContent='Sem conexão. Tente de novo.'})
+      });
+    }
+  }).catch(fail);
 })();

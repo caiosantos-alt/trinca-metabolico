@@ -1016,9 +1016,10 @@ document.addEventListener('click',async ev=>{
     try{
       const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('trinca:'+a));
       const h=Array.from(new Uint8Array(buf)).map(x=>x.toString(16).padStart(2,'0')).join('');
-      await db.collection('_cfg').doc('pin').set({h:h});
-      try{localStorage.setItem('trinca:ok',h)}catch(e){}
-      m.textContent='PIN alterado. Os outros aparelhos vão pedir o novo PIN.';
+      const r=await window.__auth.change(h);
+      if(!r||r.st!=='ok')throw new Error('x');
+      window.__auth.save(r.tok);
+      m.textContent='PIN alterado. Os outros aparelhos foram desconectados e vão pedir o novo PIN.';
       document.getElementById('pin-a').value='';document.getElementById('pin-b').value='';
     }catch(e){m.textContent='Falha ao salvar. Tente de novo.'}
     return}

@@ -6,11 +6,27 @@
   try{if(cx)localStorage.setItem('trinca:cx',cx);else cx=localStorage.getItem('trinca:cx')}catch(e){}
   if(!cx)cx=DEF;
   var lastWrite=0,inflight=0,subs=[];
+  var AUTHFN={'docs:status':1,'docs:create':1,'docs:login':1,'docs:changePin':1};
+  function tok(){try{return localStorage.getItem('trinca:tok')}catch(e){return null}}
   function call(kind,path,args){
+    if(!AUTHFN[path]){var t=tok();if(t)args=Object.assign({tok:t},args)}
     return fetch(cx+'/api/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:path,args:args,format:'json'})})
       .then(function(r){return r.json()})
-      .then(function(j){if(j.status!=='success')throw new Error(j.errorMessage||'erro');return j.value});
+      .then(function(j){
+        if(j.status!=='success'){
+          if(j.errorData==='NOAUTH'||/NOAUTH/.test(j.errorMessage||'')){
+            try{if(document.getElementById('pin'))throw 0;localStorage.removeItem('trinca:tok');if(!sessionStorage.getItem('trinca:rl')){sessionStorage.setItem('trinca:rl','1');location.reload()}}catch(e){}
+          }
+          throw new Error(j.errorMessage||'erro')}
+        return j.value});
   }
+  window.__auth={
+    status:function(){return call('query','docs:status',{tok:tok()||undefined})},
+    create:function(h){return call('mutation','docs:create',{h:h})},
+    login:function(h){return call('mutation','docs:login',{h:h})},
+    change:function(h){return call('mutation','docs:changePin',{tok:tok(),h:h})},
+    save:function(t){try{localStorage.setItem('trinca:tok',t);sessionStorage.removeItem('trinca:rl')}catch(e){}setTimeout(function(){tick()},50)}
+  };
   function meta(){return{fromCache:false,hasPendingWrites:false}}
   function addSub(s){
     subs.push(s);s.run();
