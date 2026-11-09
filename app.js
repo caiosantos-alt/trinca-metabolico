@@ -23,11 +23,11 @@ function mondayOf(s){const d=new Date(tms(s));d.setUTCDate(d.getUTCDate()-((d.ge
 function addDays(s,n){return new Date(tms(s)+n*864e5).toISOString().slice(0,10)}
 
 /* ---------- estado e salvamento ---------- */
-const fresh=()=>({log:{},sets:{},loads:{},prefs:{},diary:{},meals:{},foods:{}});
+const fresh=()=>({log:{},sets:{},loads:{},prefs:{},diary:{},meals:{},foods:{},lh:{},tpl:{},photos:{}});
 let P=null,D=null,S=fresh();
 let db=null,dbState='init',ro=false,unsubs=[];
 const pend=new Map(),chain=new Map(),dirty=new Set();
-let first={log:false,sets:false,diary:false,meals:false};
+let first={log:false,sets:false,diary:false,meals:false,photos:false};
 const sexOf=()=>S.prefs.sex||P.sex;
 const isF=()=>sexOf()==='F';
 const modeOf=()=>S.prefs.mode||P.mode;
@@ -43,13 +43,15 @@ function loadLocal(){
       const m=k.match(/^d:(\d+):(\S+)$/);if(m&&LETTER[m[2]])S.sets[m[1]+'_'+LETTER[m[2]]]={w:+m[1],L:LETTER[m[2]],done:JSON.parse(localStorage.getItem(k))}}
     localStorage.setItem('migrated2','1')}catch(e){}
 }
+const MK=['loads','foods','lh','tpl'];
 function dataFor(p){
   const[c,id]=p.split('/');
   if(c==='log')return S.log[id]||null;
   if(c==='sets')return S.sets[id]||null;
   if(c==='diary')return S.diary[id]||null;
   if(c==='meals')return S.meals[id]||null;
-  return id==='loads'?{m:S.loads}:id==='foods'?{m:S.foods}:S.prefs;
+  if(c==='photos')return S.photos[id]||null;
+  return MK.includes(id)?{m:S[id]}:S.prefs;
 }
 function persist(path){
   saveLocal();
@@ -101,7 +103,7 @@ function applyColl(name,snap){
 }
 function seedDefaults(){}
 function applyDoc(kind,snap){
-  const path='state/'+kind,pending=pend.has(path),mk=kind==='loads'?'loads':kind==='foods'?'foods':null;
+  const path='state/'+kind,pending=pend.has(path),mk=MK.includes(kind)?kind:null;
   const d=snap.exists?snap.data():null;
   if(!pending){
     if(d){
@@ -120,8 +122,8 @@ function subscribe(){
   const pid=P.pid,pf=P.pfx,g=fn=>s=>{if(P&&P.pid===pid)fn(s)};
   const err=()=>{dbState='error';setStatus()};
   try{
-    ['log','sets','diary','meals'].forEach(n=>unsubs.push(db.collection(pf+n).onSnapshot(g(s=>applyColl(n,s)),err)));
-    ['loads','prefs','foods'].forEach(k=>unsubs.push(db.collection(pf+'state').doc(k).onSnapshot(g(s=>applyDoc(k,s)),err)));
+    ['log','sets','diary','meals','photos'].forEach(n=>unsubs.push(db.collection(pf+n).onSnapshot(g(s=>applyColl(n,s)),err)));
+    ['loads','prefs','foods','lh','tpl'].forEach(k=>unsubs.push(db.collection(pf+'state').doc(k).onSnapshot(g(s=>applyDoc(k,s)),err)));
   }catch(e){err()}
 }
 async function initDb(){
@@ -136,7 +138,7 @@ function setProfile(pid){
   if(P&&P.pid===pid){view='treino';render();return}
   if(P&&db)[...pend.keys()].forEach(p=>{clearTimeout(pend.get(p).t);flush(p)});
   unsubs.forEach(f=>{try{f()}catch(e){}});unsubs=[];
-  P=PROFILES[pid];D=DATA[pid];S=fresh();first={log:false,sets:false,diary:false,meals:false};
+  P=PROFILES[pid];D=DATA[pid];S=fresh();first={log:false,sets:false,diary:false,meals:false,photos:false};
   pend.clear();chain.clear();dirty.clear();
   document.documentElement.dataset.p=P.attr;
   try{localStorage.setItem('trinca:pid',pid)}catch(e){}
@@ -259,7 +261,7 @@ function diaryPatch(patch,date){
 function checkin(){
   const r=S.diary[todayS()]||{};
   const km=D.knee?kneeMsg(r.knee):null;
-  let h=`<section class="card"><div class="head"><h3>Check-in de hoje</h3></div><div class="form">
+  let h=remindersCard()+`<section class="card"><div class="head"><h3>Check-in de hoje</h3></div><div class="form">
     <label>Sono (h)<input type="text" inputmode="decimal" id="ci-sono" value="${r.sono!=null?f1(r.sono):''}" placeholder="7,5"></label>
     <label>Cardio (min)<input type="text" inputmode="numeric" id="ci-cardio" value="${r.cardio!=null?r.cardio:''}" placeholder="0"></label>
     <div class="wide lbl">Energia</div>
@@ -429,11 +431,13 @@ function nutTargets(){
   if(!st||!h||!a)return{missing:[!st?'o peso (aba Corpo)':null,!h?'a altura':null,!a?'a idade':null].filter(Boolean)};
   const w=st.last.v,F=isF(),bmr=10*w+6.25*h-5*a+(F?-161:5);
   const am=avgOf(actWin(todayS(),7),'move');
-  const tdee=am!=null?bmr*1.2+am:bmr*1.4;
+  const tdee=S.prefs.tdeeCal!=null?S.prefs.tdeeCal:(am!=null?bmr*1.2+am:bmr*1.4);
   const perder=modeOf()==='perder',adj=S.prefs.adj!=null?S.prefs.adj:(perder?-20:5);
   const kcal=Math.max(tdee*(1+adj/100),bmr);
-  const prot=w*(perder?2.0:1.6),fat=0.25*kcal/9,carb=Math.max(0,(kcal-prot*4-fat*9)/4);
-  return{w,bmr,tdee,adj,kcal,prot,fat,carb,fib:14*kcal/1000,am,perder};
+  const cs=compSeries(),lean=cs.length?cs[cs.length-1].lean:null,bf=cs.length?cs[cs.length-1].bf:null;
+  const useLean=lean!=null&&bf>(F?32:22);
+  const pbase=useLean?lean:w,prot=pbase*(perder?2.0:1.6),fat=0.25*kcal/9,carb=Math.max(0,(kcal-prot*4-fat*9)/4);
+  return{w,bmr,tdee,adj,kcal,prot,fat,carb,fib:14*kcal/1000,am,perder,useLean,lean,pbase};
 }
 function nutTips(t,T,date){
   const out=[],it=(S.meals[date]||{}).items||[];
@@ -475,7 +479,7 @@ function renderNut(){
     const sel=[-25,-20,-15,-10,0,5,10].map(v=>`<option value="${v}" ${v===t.adj?'selected':''}>${v>0?'+':''}${v}%</option>`).join('');
     h+=`<section class="card"><div class="head"><h3>Metas do dia</h3></div>
       <div class="stats4"><div class="stat"><small>Calorias</small><b>${fi(t.kcal)} kcal</b><span>${t.perder?'para perder gordura':'manter e ganhar massa magra'}</span></div>
-      <div class="stat"><small>Proteína</small><b>${fi(t.prot)} g</b><span>${f1(t.prot/t.w)} g por kg</span></div>
+      <div class="stat"><small>Proteína</small><b>${fi(t.prot)} g</b><span>${f1(t.prot/t.pbase)} g por kg ${t.useLean?'de massa magra':'de peso'}</span></div>
       <div class="stat"><small>Carboidrato</small><b>${fi(t.carb)} g</b><span>o restante das calorias</span></div>
       <div class="stat"><small>Gordura</small><b>${fi(t.fat)} g</b><span>cerca de 25% das calorias</span></div></div>
       <label class="lbl" style="display:grid;gap:4px">Ajuste sobre o gasto estimado<select id="n-adj">${sel}</select></label>
@@ -484,6 +488,7 @@ function renderNut(){
   const pbar=(lbl,v,g,u)=>g?`<div class="goal"><div class="row"><span>${lbl}</span><span>${fi(v)} de ${fi(g)} ${u}</span></div><div class="bar"><i style="width:${clamp(v/g*100,0,100)}%"></i></div></div>`:`<div class="goal"><div class="row"><span>${lbl}</span><span>${fi(v)} ${u}</span></div></div>`;
   h+=`<section class="card"><div class="head"><button class="ghost" data-nutd="-1">‹ Anterior</button><button class="ghost" data-nutd="1" ${isToday?'disabled':''}>Próximo ›</button></div>
     ${pbar('Calorias',T.k,t.kcal,'kcal')}${pbar('Proteína',T.p,t.prot,'g')}${pbar('Carboidrato',T.c,t.carb,'g')}${pbar('Gordura',T.l,t.fat,'g')}${pbar('Fibra',T.f,t.fib,'g')}</section>`;
+  if(isToday)h+=weekCard();
   if(!t.missing){const ti=nutTips(t,T,nutDate);h+=`<section class="card"><div class="head"><h3>Leitura do dia</h3></div><ul class="ins">${ti.map(i=>`<li class="${i.t}">${esc(i.x)}</li>`).join('')}</ul></section>`}
   const f=nutSel?foodGet(nutSel):null;
   h+=`<section class="card"><div class="head"><h3>Adicionar alimento</h3></div>
@@ -498,11 +503,13 @@ function renderNut(){
       <label class="wide">Fibra (g, opcional)<input type="text" inputmode="decimal" id="cf-f"></label>
       <button class="save" id="savefood">Salvar alimento</button></div>
       ${Object.keys(S.foods).length?`<div class="hist" style="margin-top:8px">${Object.entries(S.foods).map(([k,x])=>`<div><span>${esc(x.n)}</span><b>${fi(x.k)} kcal</b><button class="del" data-fdel="${k}">Excluir</button></div>`).join('')}</div>`:''}</details></section>`;
+  h+=tplCard();
   const items=(S.meals[nutDate]||{}).items||[];
   h+=`<section class="card"><div class="head"><h3>Refeições</h3></div>`+(items.length?MEALS.map(([k,n])=>{
     const L=items.filter(x=>x.m===k);if(!L.length)return'';
     const sk=L.reduce((a,x)=>a+x.k,0);
     return`<div class="meal"><div class="mh"><b>${n}</b><span>${fi(sk)} kcal</span></div>${L.map(x=>`<div class="mi"><span>${esc(x.n)}<small>${fi(x.g)} g · P ${f1(x.p)} · C ${f1(x.c)} · G ${f1(x.l)}</small></span><b>${fi(x.k)}</b><button class="del" data-mdel="${x.u}">Excluir</button></div>`).join('')}</div>`}).join(''):'<p class="fine">Nada lançado neste dia.</p>')+`</section>`;
+  h+=waterCard();
   const sp=SUPS.find(x=>x[0]===supSel)||SUPS[0],sl=supsOf(nutDate),cafe=sl.filter(x=>x.k==='cafeina').reduce((a,x)=>a+x.q,0);
   const cdays=Array.from({length:7},(_,i)=>addDays(nutDate,-i)).filter(d=>supsOf(d).some(x=>x.k==='creatina')).length;
   h+=`<section class="card"><div class="head"><h3>Suplementos tomados</h3></div>
@@ -703,7 +710,10 @@ function renderCorpo(){
     <details style="margin-top:10px"><summary>Alterar PIN de acesso</summary><div class="form" style="margin-top:12px">
     <label>Novo PIN (4 a 6 números)<input type="password" inputmode="numeric" maxlength="6" id="pin-a" autocomplete="off"></label>
     <label>Repetir novo PIN<input type="password" inputmode="numeric" maxlength="6" id="pin-b" autocomplete="off"></label>
-    <button class="save" id="chpin">Alterar PIN</button><p class="fine" id="pin-msg">Outros aparelhos serão desconectados e vão pedir o novo PIN.</p></div></details></section>`;
+    <button class="save" id="chpin">Alterar PIN</button><p class="fine" id="pin-msg">Outros aparelhos serão desconectados e vão pedir o novo PIN.</p></div></details>
+    <details style="margin-top:10px"><summary>Backup dos dados</summary><div class="form" style="margin-top:12px"><button class="ghost" id="bk-save">Baixar backup (arquivo)</button>
+    <label class="save" style="display:grid;place-items:center;cursor:pointer;min-height:48px">Restaurar de um backup<input type="file" id="bk-file" accept=".json,application/json" hidden></label><p class="fine" id="bk-msg">O backup inclui medidas, treinos, alimentos, fotos e ajustes. Restaurar junta os dados do arquivo aos atuais.</p></div></details></section>`;
+  h+=photoCard();
   $('#main').innerHTML=h;
 }
 
@@ -711,6 +721,7 @@ function renderCorpo(){
 function renderJornada(){
   const cw=S.prefs.start?weekOf(todayS()):null;
   let h=roNote()+`<div class="daytitle"><h2>Jornada</h2><div class="count">${S.prefs.start?'início '+br(S.prefs.start):'sem data de início'}</div></div>`;
+  h+=weekCard()+loadCard();
   h+=`<section class="card"><div class="jh"><span>Sem</span><span>Treinos A B C D</span><span>Peso médio</span><span>Cintura</span></div>`;
   let prevAvg=null;
   for(let w=1;w<=8;w++){
@@ -748,6 +759,141 @@ function render(){
   setStatus();
 }
 
+/* ---------- extras: semana, água, favoritas, lembretes, cargas, fotos, backup ---------- */
+const uid=()=>Date.now().toString(36)+Math.floor(Math.random()*1e3).toString(36);
+const waterGoal=()=>{const s=series('kg'),w=s.length?s[s.length-1].v:80;return Math.round(35*w/250)*250};
+function weekSum(){
+  const end=todayS(),win=(o)=>Array.from({length:7},(_,i)=>addDays(end,-o-i));
+  const cur=win(0),prv=win(7);
+  const wavg=ds=>{const v=ds.map(d=>(S.log[d]||{}).kg).filter(x=>x!=null);return v.length>=2||(v.length===1)?{a:v.reduce((x,y)=>x+y,0)/v.length,n:v.length}:null};
+  const a1=wavg(cur),a0=wavg(prv);
+  const wk=waistKey(),ws=series(wk),w1=ws.filter(x=>cur.includes(x.d)).pop(),w0=ws.filter(x=>prv.includes(x.d)).pop();
+  const logged=cur.filter(d=>((S.meals[d]||{}).items||[]).length);
+  const ik=logged.length?logged.reduce((a,d)=>a+nutTot(d).k,0)/logged.length:null,ip=logged.length?logged.reduce((a,d)=>a+nutTot(d).p,0)/logged.length:null;
+  const cw=curWeek(),done=LET.filter(L=>{const p=progressOf(cw,L);return p.tot&&p.got>=p.tot}).length;
+  const steps=avgOf(actWin(end,7),'steps');
+  const rate=a1&&a0&&a1.n>=2&&a0.n>=2?a1.a-a0.a:null;
+  /* gasto real: consumo médio dos dias lançados nas 2 semanas, corrigido pela variação do peso */
+  const l14=cur.concat(prv).filter(d=>((S.meals[d]||{}).items||[]).length);
+  let real=null;
+  if(rate!=null&&l14.length>=8){const I=l14.reduce((a,d)=>a+nutTot(d).k,0)/l14.length;real=I-rate*7700/7}
+  return{a1,a0,rate,w1,w0,wk,logged:logged.length,ik,ip,done,cw,steps,real,l14:l14.length};
+}
+function weekCard(){
+  const s=weekSum(),t=nutTargets(),h=[];
+  const row=(l,v,sub)=>`<div class="stat"><small>${l}</small><b>${v}</b><span>${sub||''}</span></div>`;
+  let g=`<section class="card"><div class="head"><h3>Resumo dos últimos 7 dias</h3></div><div class="stats4">`;
+  g+=row('Peso médio',s.a1?f1(s.a1.a)+' kg':'–',s.rate!=null?sgn(s.rate)+' kg vs semana anterior':'lance 2+ pesos por semana');
+  g+=row(s.wk==='abdomen'?'Abdômen':'Cintura',s.w1?f1(s.w1.v)+' cm':'–',s.w1&&s.w0?sgn(s.w1.v-s.w0.v)+' cm':'');
+  g+=row('Calorias/dia',s.ik!=null?fi(s.ik):'–',s.ik!=null&&!t.missing?'meta '+fi(t.kcal)+' · '+s.logged+' dias':'lance refeições');
+  g+=row('Proteína/dia',s.ip!=null?fi(s.ip)+' g':'–',s.ip!=null&&!t.missing?'meta '+fi(t.prot)+' g':'');
+  g+=row('Treinos',s.done+' de 4','semana '+s.cw+' do programa');
+  g+=row('Passos/dia',s.steps!=null?fi(s.steps):'–','');
+  g+=`</div>`;
+  if(!t.missing&&t.perder&&s.rate!=null){
+    const pct=s.rate/s.a0.a*100;
+    if(s.rate>-0.15)h.push({t:'warn',x:`O peso quase não mudou (${sgn(s.rate)} kg na semana). Se você está seguindo a meta, o gasto real deve ser menor que o estimado. Dê mais 1 a 2 semanas e confira o gasto real abaixo antes de cortar mais.`});
+    else if(pct<-1)h.push({t:'warn',x:`Perda de ${f1(-pct)}% do peso em uma semana, acima de 1%. Isso aumenta o risco de perder músculo. Considere subir um pouco as calorias.`});
+    else h.push({t:'good',x:`Ritmo de ${f1(-s.rate)} kg por semana, dentro do esperado para o déficit escolhido.`});
+  }
+  if(s.real!=null&&!t.missing){
+    const on=S.prefs.tdeeCal!=null;
+    h.push({t:'info',x:`Gasto real estimado pelo seu consumo e pela variação do peso: cerca de ${fi(s.real)} kcal/dia (o app está usando ${fi(t.tdee)} kcal). Funciona melhor com muitos dias lançados e pesagens regulares; quem esquece de lançar algo subestima o consumo.`});
+    g+=`<ul class="ins">${h.map(i=>`<li class="${i.t}">${esc(i.x)}</li>`).join('')}</ul>`;
+    g+=on?`<button class="ghost" data-cal="off">Voltar à estimativa do app (usando ${fi(S.prefs.tdeeCal)} kcal)</button>`:`<button class="ghost" data-cal="${Math.round(s.real)}">Usar ${fi(s.real)} kcal como meu gasto</button>`;
+  }else if(h.length)g+=`<ul class="ins">${h.map(i=>`<li class="${i.t}">${esc(i.x)}</li>`).join('')}</ul>`;
+  return g+`</section>`;
+}
+function remindersCard(){
+  const t=todayS(),hr=new Date().getHours(),out=[];
+  const ws=series('kg'),lw=ws[ws.length-1];
+  if(!lw)out.push('Registrar o peso inicial (aba Corpo).');
+  else{const n=Math.round((tms(t)-tms(lw.d))/864e5);if(n>=3)out.push(`Pesar-se: último peso há ${n} dias.`)}
+  const lc=Object.values(S.log).filter(r=>Object.keys(r.c||{}).length).map(r=>r.d).sort().pop();
+  if(lc&&tms(t)-tms(lc)>=14*864e5)out.push('Hora de medir as circunferências (a cada 2 semanas).');
+  const lp=Object.values(S.photos).map(r=>r.d).sort().pop();
+  if(lp&&tms(t)-tms(lp)>=28*864e5)out.push('Já faz mais de 4 semanas desde a última foto de progresso.');
+  if(!supsOf(t).some(x=>x.k==='creatina'))out.push('Creatina de hoje ainda não registrada.');
+  const ag=(S.diary[t]||{}).agua||0,gl=waterGoal();
+  if(hr>=14&&ag<gl*0.5)out.push(`Água: ${fi(ag)} ml de ${fi(gl)} ml até agora.`);
+  if(hr>=12&&!((S.meals[t]||{}).items||[]).length)out.push('Nenhuma refeição lançada hoje (aba Nutrição).');
+  if(!out.length)return'';
+  return`<section class="card"><div class="head"><h3>Lembretes de hoje</h3></div><ul class="ins">${out.map(x=>`<li class="info">${esc(x)}</li>`).join('')}</ul></section>`;
+}
+function waterCard(){
+  const d=nutDate||todayS(),v=(S.diary[d]||{}).agua||0,g=waterGoal();
+  return`<section class="card"><div class="head"><h3>Água</h3></div>
+    <div class="goal"><div class="row"><span>Hoje</span><span>${fi(v)} de ${fi(g)} ml</span></div><div class="bar"><i style="width:${clamp(v/g*100,0,100)}%"></i></div></div>
+    <div class="chips" style="margin-inline:0;padding-inline:0"><button data-agua="250">+250 ml</button><button data-agua="500">+500 ml</button><button data-agua="-250">−250 ml</button></div>
+    <p class="fine">Meta de cerca de 35 ml por kg de peso, uma referência geral. Necessidade real varia com calor, suor e alimentação.</p></section>`;
+}
+function tplCard(){
+  const it=((S.meals[nutDate||todayS()]||{}).items||[]).filter(x=>x.m===nutMeal);
+  const ids=Object.keys(S.tpl);
+  let h=`<section class="card"><div class="head"><h3>Refeições favoritas</h3></div>`;
+  if(ids.length)h+=`<div class="hist">`+ids.map(k=>{const x=S.tpl[k],kc=x.items.reduce((a,i)=>a+i.k,0),pp=x.items.reduce((a,i)=>a+i.p,0);
+    return`<div><span>${esc(x.n)}<small style="display:block;color:var(--muted)">${fi(kc)} kcal · P ${f1(pp)} g · ${x.items.length} itens</small></span><b><button class="ghost" data-tpladd="${k}">Lançar</button></b><button class="del" data-tpldel="${k}">Excluir</button></div>`}).join('')+`</div>`;
+  else h+=`<p class="fine">Salve uma refeição que você repete (marmita, café da manhã) e lance com um toque.</p>`;
+  if(it.length)h+=`<div class="form"><label class="wide">Salvar os itens de "${esc((MEALS.find(m=>m[0]===nutMeal)||[0,''])[1])}" de hoje como favorita<input type="text" id="tpl-n" placeholder="Nome, ex.: Marmita padrão"></label><button class="save" id="tplsave">Salvar favorita</button></div>`;
+  else h+=`<p class="fine">Para criar uma favorita, lance os alimentos em uma refeição e volte aqui.</p>`;
+  return h+`</section>`;
+}
+/* cargas */
+function lhRec(name,v){const n=num(v);if(!(n>0&&n<1000))return;const a=S.lh[name]||(S.lh[name]=[]),t=todayS(),l=a[a.length-1];if(l&&l.d===t)l.v=n;else a.push({d:t,v:n});persist('state/lh')}
+let lhSel=null;
+function exDone(name,L,w){const rec=setsRec(w,L);if(!rec)return false;const sv=week;week=w;const e=D.ex.find(x=>x.nome===name),p=e?parse(presc(e)):null;week=sv;if(!p)return false;return(rec.done[name]||[]).slice(0,p.min).filter(Boolean).length>=p.min}
+function loadCard(){
+  const names=[...new Set(D.ex.map(e=>e.nome))].filter(n=>(S.lh[n]||[]).length);
+  if(!names.length)return`<section class="card"><div class="head"><h3>Evolução das cargas</h3></div><p class="fine">Quando você lançar as cargas na aba Treino, o histórico e os recordes aparecem aqui.</p></section>`;
+  if(!lhSel||!names.includes(lhSel))lhSel=names[0];
+  const a=S.lh[lhSel],pr=a.reduce((m,x)=>x.v>m.v?x:m,a[0]),last=a[a.length-1];
+  const e=D.ex.find(x=>x.nome===lhSel),L=e.dia,cw=curWeek();
+  let tip='';
+  if(cw>=2&&exDone(lhSel,L,cw)&&exDone(lhSel,L,cw-1)&&a.length>=2&&a[a.length-1].v===a[a.length-2].v){
+    const lo=Math.round(last.v*1.02*2)/2,hi=Math.round(last.v*1.05*2)/2;
+    tip=`<p class="kmsg good">Você completou todas as séries nas duas últimas semanas com ${f1(last.v)} kg. Dá para tentar ${f1(Math.max(lo,last.v+0.5))} a ${f1(Math.max(hi,last.v+1))} kg, se a técnica estiver firme.</p>`;
+  }
+  return`<section class="card"><div class="head"><h3>Evolução das cargas</h3></div>
+    <label class="lbl" style="display:grid;gap:4px">Exercício<select id="lh-ex">${names.map(n=>`<option ${n===lhSel?'selected':''}>${esc(n)}</option>`).join('')}</select></label>
+    <div class="stats4"><div class="stat"><small>Atual</small><b>${f1(last.v)} kg</b><span>${br(last.d)}</span></div><div class="stat"><small>Recorde</small><b>${f1(pr.v)} kg</b><span>${br(pr.d)}</span></div></div>
+    ${chart(a.map(x=>({d:x.d,v:x.v})),'kg')}${tip}</section>`;
+}
+/* fotos */
+let phAng='f';
+const ANG={f:'Frente',l:'Lado',c:'Costas'};
+function photoCard(){
+  const all=Object.entries(S.photos).filter(([k])=>k.endsWith('_'+phAng)).sort((a,b)=>a[1].d<b[1].d?-1:1).map(x=>x[1]);
+  let h=`<section class="card"><div class="head"><h3>Fotos de progresso</h3></div>
+    <div class="chips" style="margin-inline:0;padding-inline:0">${Object.entries(ANG).map(([k,n])=>`<button data-phang="${k}" aria-pressed="${phAng===k}">${n}</button>`).join('')}</div>
+    <label class="save" style="display:grid;place-items:center;cursor:pointer;min-height:48px">Tirar ou escolher foto (${ANG[phAng].toLowerCase()})<input type="file" id="ph-file" accept="image/*" hidden></label>`;
+  if(all.length>=2){const f=all[0],l=all[all.length-1];
+    h+=`<div class="phg"><figure><img src="${f.img}" alt="Primeira foto"><figcaption>${br(f.d)}</figcaption></figure><figure><img src="${l.img}" alt="Foto mais recente"><figcaption>${br(l.d)}</figcaption></figure></div>`}
+  if(all.length)h+=`<div class="hist">${all.slice().reverse().map(x=>`<div><span>${br(x.d)}</span><b><button class="ghost" data-phview="${x.d}_${phAng}">Ver</button></b><button class="del" data-phdel="${x.d}_${phAng}">Excluir</button></div>`).join('')}</div>`;
+  else h+=`<p class="fine">Nenhuma foto de ${ANG[phAng].toLowerCase()} ainda. Tire sempre no mesmo lugar, luz e horário, a cada 4 semanas.</p>`;
+  return h+`<p class="fine">As fotos ficam salvas no seu servidor do app, reduzidas para economizar espaço.</p></section>`;
+}
+function shrinkImg(file,cb){
+  const r=new FileReader();r.onload=()=>{const im=new Image();im.onload=()=>{
+    const m=720,k=Math.min(1,m/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);
+    c.getContext('2d').drawImage(im,0,0,c.width,c.height);let q=.6,u=c.toDataURL('image/jpeg',q);
+    while(u.length>150000&&q>.3){q-=.1;u=c.toDataURL('image/jpeg',q)}cb(u)};im.onerror=()=>cb(null);im.src=r.result};r.onerror=()=>cb(null);r.readAsDataURL(file);
+}
+/* backup */
+function backupAll(){
+  const o={app:'trinca',v:1,at:new Date().toISOString(),data:{log:S.log,sets:S.sets,diary:S.diary,meals:S.meals,photos:S.photos,loads:S.loads,foods:S.foods,lh:S.lh,tpl:S.tpl,prefs:S.prefs}};
+  const b=new Blob([JSON.stringify(o)],{type:'application/json'}),a=document.createElement('a');
+  a.href=URL.createObjectURL(b);a.download='trinca-backup-'+todayS()+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
+}
+function restoreAll(txt,msg){
+  let o;try{o=JSON.parse(txt)}catch(e){msg('Arquivo inválido.');return}
+  if(!o||o.app!=='trinca'||!o.data){msg('Este não é um backup do app.');return}
+  let n=0;
+  ['log','sets','diary','meals','photos'].forEach(c=>{const src=o.data[c]||{};Object.keys(src).forEach(id=>{S[c][id]=src[id];persist(c+'/'+id);n++})});
+  ['loads','foods','lh','tpl'].forEach(k=>{if(o.data[k]){Object.assign(S[k],o.data[k]);persist('state/'+k)}});
+  if(o.data.prefs){S.prefs=Object.assign({},S.prefs,o.data.prefs);persist('state/prefs')}
+  msg(`Backup restaurado (${n} registros).`);render();
+}
+
 /* ---------- ações ---------- */
 function applyMeasure(date,patch){
   const r=S.log[date]||(S.log[date]={d:date,c:{}});
@@ -764,6 +910,20 @@ function csvText(){
   return'﻿'+lines.join('\n');
 }
 document.addEventListener('click',async ev=>{
+  {const t=ev.target.closest('button');if(t){
+  if(t.dataset.cal){if(t.dataset.cal==='off')delete S.prefs.tdeeCal;else S.prefs.tdeeCal=+t.dataset.cal;persist('state/prefs');render();return}
+  if(t.dataset.agua){const d=nutDate||todayS(),v=Math.max(0,((S.diary[d]||{}).agua||0)+(+t.dataset.agua));diaryPatch({agua:v||null},d);renderNut();return}
+  if(t.id==='tplsave'){const n=(document.getElementById('tpl-n').value||'').trim(),it=((S.meals[nutDate||todayS()]||{}).items||[]).filter(x=>x.m===nutMeal);
+    if(!n||!it.length){t.textContent='Dê um nome';setTimeout(()=>{t.textContent='Salvar favorita'},1800);return}
+    S.tpl[uid()]={n:n.slice(0,40),items:it.map(x=>({n:x.n,g:x.g,k:x.k,p:x.p,c:x.c,l:x.l,f:x.f}))};persist('state/tpl');renderNut();return}
+  if(t.dataset.tpladd){const x=S.tpl[t.dataset.tpladd];if(x){const date=nutDate||todayS(),doc=S.meals[date]||(S.meals[date]={d:date,items:[]});
+    x.items.forEach(i=>doc.items.push(Object.assign({u:uid(),m:nutMeal||defMeal()},i)));persist('meals/'+date);renderNut()}return}
+  if(t.dataset.tpldel){delete S.tpl[t.dataset.tpldel];persist('state/tpl');renderNut();return}
+  if(t.dataset.phang){phAng=t.dataset.phang;renderCorpo();return}
+  if(t.dataset.phdel){if(t.classList.contains('arm')){delete S.photos[t.dataset.phdel];persist('photos/'+t.dataset.phdel);renderCorpo()}else{t.classList.add('arm');t.textContent='Confirmar';setTimeout(()=>{t.classList.remove('arm');t.textContent='Excluir'},3000)}return}
+  if(t.dataset.phview){const p=S.photos[t.dataset.phview];if(p){const w=document.createElement('div');w.style.cssText='position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.92);display:grid;place-items:center;padding:12px';w.innerHTML='<img src="'+p.img+'" style="max-width:100%;max-height:100%;border-radius:8px" alt="Foto">';w.onclick=()=>w.remove();document.body.appendChild(w)}return}
+  if(t.id==='bk-save'){backupAll();return}
+  }}
   const z=ev.target.closest('[data-z]');
   if(z){sel=z.dataset.z;renderCorpo();document.querySelector('.panel')?.scrollIntoView({block:'nearest',behavior:'smooth'});return}
   const t=ev.target.closest('button');if(!t)return;
@@ -872,7 +1032,7 @@ document.addEventListener('click',async ev=>{
 document.addEventListener('keydown',ev=>{const z=ev.target.closest&&ev.target.closest('[data-z]');if(z&&(ev.key==='Enter'||ev.key===' ')){ev.preventDefault();sel=z.dataset.z;renderCorpo()}});
 document.addEventListener('input',ev=>{
   const i=ev.target;if(!i.id&&!(i.dataset&&i.dataset.kg!==undefined))return;
-  if(i.dataset&&i.dataset.kg!==undefined){S.loads[i.dataset.kg]=i.value;persist('state/loads');return}
+  if(i.dataset&&i.dataset.kg!==undefined){S.loads[i.dataset.kg]=i.value;persist('state/loads');lhRec(i.dataset.kg,i.value);return}
   if(i.id==='sp-d'){supD=i.value;return}
   if(i.id==='n-q'){nutQ=i.value;updateNutRes();return}
   if(i.id==='n-g'){nutG=i.value;const p=document.getElementById('npv');if(p)p.textContent=npv();return}
@@ -892,3 +1052,13 @@ let saved=null;try{saved=localStorage.getItem('trinca:pid')}catch(e){}
 render();
 initDb();
 setProfile('caio');
+
+document.addEventListener('change',ev=>{
+  const i=ev.target;
+  if(i.id==='lh-ex'){lhSel=i.value;render();return}
+  if(i.id==='ph-file'&&i.files&&i.files[0]){
+    const f=i.files[0],a=phAng;shrinkImg(f,u=>{if(!u){alert('Não consegui ler a imagem.');return}
+      const d=todayS(),id=d+'_'+a;S.photos[id]={d,a,img:u};persist('photos/'+id);renderCorpo()});return}
+  if(i.id==='bk-file'&&i.files&&i.files[0]){
+    const m=document.getElementById('bk-msg'),r=new FileReader();r.onload=()=>restoreAll(String(r.result),t=>{if(m)m.textContent=t});r.readAsText(i.files[0]);}
+});
